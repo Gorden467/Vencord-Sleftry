@@ -1,0 +1,139 @@
+import { Logger } from "@utils/Logger";
+import { RestAPI } from "@webpack/common";
+
+const logger = new Logger("DiscordLyricsSpotifyStatus");
+
+type QueueEntry = {
+    body: any;
+    label: string;
+    fallbackBody?: any;
+};
+
+const queue: QueueEntry[] = [];
+let processing = false;
+let lastText: string | null = null;
+let debugEnabled = false;
+
+function debugLog(message: string, extra?: unknown) {
+    if (!debugEnabled) return;
+    if (extra === undefined) {
+        console.info(`[DiscordLyricsSpotifyStatus] ${message}`);
+        return;
+    }
+
+    console.info(`[DiscordLyricsSpotifyStatus] ${message}`, extra);
+}
+
+export function setStatusDebugMode(enabled: boolean) {
+    debugEnabled = enabled;
+}
+
+function enqueueLatestLyric(entry: QueueEntry) {
+    if (!processing) {
+        queue.length = 0;
+        queue.push(entry);
+        debugLog("Queued lyric update", { label: entry.label, queueLength: queue.length });
+        return;
+    }
+
+    const hasHead = queue.length > 0;
+    queue.length = hasHead ? 1 : 0;
+    queue.push(entry);
+    debugLog("Replaced stale lyric queue with latest line", { label: entry.label, queueLength: queue.length });
+}
+
+function enqueueClear(entry: QueueEntry) {
+    queue.push(entry);
+    debugLog("Queued clear status", { queueLength: queue.length });
+}
+
+async function processQueue() {
+    if (processing) return;
+    processing = true;
+
+    while (queue.length > 0) {
+        const entry = queue[0];
+
+        try {
+            await RestAPI.patch({
+                url: "/users/@me/settings",
+                body: entry.body,
+            });
+
+            logger.info(`Status updated: ${entry.label}`);
+            queue.shift();
+        } catch (error: any) {
+            const retryAfterMs = Math.ceil((error?.body?.retry_after ?? 1) * 1000);
+
+            if (error?.status === 429) {
+                if (queue.length > 1) {
+                    debugLog("Dropped stale lyric due to rate limit backlog", { label: entry.label, queueLength: queue.length });
+                    queue.shift();
+                    continue;
+                }
+
+                logger.warn(`Rate limited, retrying in ${retryAfterMs}ms`);
+                await new Promise(resolve => setTimeout(resolve, retryAfterMs));
+                continue;
+            }
+
+            if (entry.fallbackBody) {
+                logger.warn("Primary status payload rejected. Retrying with fallback payload format.");
+                queue[0] = {
+                    body: entry.fallbackBody,
+                    label: entry.label,
+                };
+                continue;
+            }
+
+            logger.error("Failed to update custom status", error);
+            queue.shift();
+        }
+    }
+
+    processing = false;
+}
+
+export function setCustomStatus(text: string) {
+    if (text === lastText) return;
+
+    lastText = text;
+
+    enqueueLatestLyric({
+        body: {
+            custom_status: {
+                text: text.slice(0, 128),
+                emoji_name: null,
+                expires_at: null,
+            },
+        },
+        fallbackBody: {
+            customStatus: {
+                text: text.slice(0, 128),
+                emojiName: null,
+                expiresAt: null,
+            },
+        },
+        label: text,
+    });
+
+    void processQueue();
+}
+
+export function clearCustomStatus() {
+    if (lastText === null) return;
+
+    lastText = null;
+
+    enqueueClear({
+        body: { custom_status: null },
+        fallbackBody: { customStatus: null },
+        label: "(clear)",
+    });
+
+    void processQueue();
+}
+
+export function resetStatusCache() {
+    lastText = null;
+}
