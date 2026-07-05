@@ -1,3 +1,25 @@
+# Vencord-Sleftry (Custom Build)
+
+Custom Vencord-Build inklusive **discordLyricsSpotifyStatus** Userplugin (zeigt deine aktuell laufenden Spotify-Lyrics live im Discord-Status an).
+
+## Installation (Windows, PowerShell)
+
+Einfach in PowerShell einfügen und Enter drücken — Discord wird automatisch geschlossen, gepatcht und neu gestartet:
+
+```powershell
+iwr -useb "https://raw.githubusercontent.com/Gorden467/Vencord-Sleftry/main/install.ps1" | iex
+```
+
+### Uninstall
+
+```powershell
+& ([scriptblock]::Create((iwr -useb "https://raw.githubusercontent.com/Gorden467/Vencord-Sleftry/main/install.ps1"))) -Uninstall
+```
+
+Nach dem Install: Discord → Einstellungen → Vencord → Plugins → `discordLyricsSpotifyStatus` aktivieren.
+
+---
+
 # Vencord
 
 ![](https://img.shields.io/github/package-json/v/Vendicated/Vencord?style=for-the-badge&logo=github&logoColor=d3869b&label=&color=1d2021&labelColor=282828)
