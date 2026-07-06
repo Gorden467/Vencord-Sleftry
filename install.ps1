@@ -34,6 +34,8 @@ $ExtractDir   = Join-Path $InstallRoot "repo"
 $InstallerDir = Join-Path $InstallRoot "Installer"
 $InstallerExe = Join-Path $InstallerDir "VencordInstallerCli.exe"
 $ZipPath      = Join-Path $InstallRoot "repo.zip"
+$SettingsBackup = Join-Path $InstallRoot "settings-backup"
+$PluginStatesFile = Join-Path $InstallRoot "plugin-states.txt"
 
 $RepoZipUrl   = "https://codeload.github.com/$RepoOwner/$RepoName/zip/refs/heads/$RepoBranch"
 $InstallerUrl = "https://github.com/Vencord/Installer/releases/latest/download/VencordInstallerCli.exe"
@@ -41,6 +43,46 @@ $MonitorUrl   = "https://raw.githubusercontent.com/$RepoOwner/$RepoName/$RepoBra
 $MonitorPath  = Join-Path $InstallRoot "vencord-monitor.ps1"
 $ShaFile      = Join-Path $InstallRoot "installed_sha.txt"
 $TaskName     = "VencordAutoUpdate"
+
+function Backup-VencordSettings {
+    param([string]$From, [string]$To, [string]$StatesFile)
+
+    $settingsDir = Join-Path $From "settings"
+    if (-not (Test-Path $settingsDir)) { return $false }
+
+    if (Test-Path $To) { Remove-Item -Recurse -Force $To -ErrorAction SilentlyContinue }
+    Copy-Item -Path $settingsDir -Destination $To -Recurse -Force
+
+    # Human-readable plugin-states dump
+    $settingsJson = Join-Path $settingsDir "settings.json"
+    if (Test-Path $settingsJson) {
+        try {
+            $data = Get-Content $settingsJson -Raw | ConvertFrom-Json
+            if ($data.plugins) {
+                $lines = @("Plugin-Zustaende (Snapshot vor Update, $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))", "")
+                $data.plugins.PSObject.Properties |
+                    Sort-Object Name |
+                    ForEach-Object {
+                        $on = if ($_.Value.enabled) { "AN " } else { "AUS" }
+                        $lines += "$on  $($_.Name)"
+                    }
+                Set-Content -Path $StatesFile -Value $lines -Encoding UTF8
+            }
+        } catch {}
+    }
+
+    return $true
+}
+
+function Restore-VencordSettings {
+    param([string]$From, [string]$To)
+
+    if (-not (Test-Path $From)) { return $false }
+    $target = Join-Path $To "settings"
+    if (Test-Path $target) { Remove-Item -Recurse -Force $target -ErrorAction SilentlyContinue }
+    Copy-Item -Path $From -Destination $target -Recurse -Force
+    return $true
+}
 
 function Info($m) { Write-Host "[Vencord] $m" -ForegroundColor Cyan }
 function Ok($m)   { Write-Host "[Vencord] $m" -ForegroundColor Green }
@@ -99,6 +141,14 @@ try {
     exit 1
 }
 
+$hadSettings = $false
+if (Test-Path $ExtractDir) {
+    if (Backup-VencordSettings -From $ExtractDir -To $SettingsBackup -StatesFile $PluginStatesFile) {
+        $hadSettings = $true
+        Info "Bestehende Plugin-Einstellungen gesichert -> $SettingsBackup"
+    }
+}
+
 Info "Entpacke..."
 if (Test-Path $ExtractDir) { Remove-Item -Recurse -Force $ExtractDir }
 $tmpExtract = Join-Path $InstallRoot "_extract"
@@ -112,6 +162,10 @@ Remove-Item -Force $ZipPath
 if (-not (Test-Path (Join-Path $ExtractDir "dist\patcher.js"))) {
     Err "dist/patcher.js fehlt im Repo. Wurde 'pnpm build' vor dem Push ausgefuehrt und dist/ committed?"
     exit 1
+}
+
+if ($hadSettings -and (Restore-VencordSettings -From $SettingsBackup -To $ExtractDir)) {
+    Ok "Plugin-Einstellungen wiederhergestellt (Plugin-Zustaende bleiben wie vorher)."
 }
 
 if (-not (Test-Path $InstallerExe)) {
@@ -155,8 +209,10 @@ $exit = $LASTEXITCODE
 if ($exit -eq 0) {
     if ($Uninstall) {
         Unregister-VencordAutoUpdate
-        if (Test-Path $ShaFile)     { Remove-Item -Force $ShaFile -ErrorAction SilentlyContinue }
-        if (Test-Path $MonitorPath) { Remove-Item -Force $MonitorPath -ErrorAction SilentlyContinue }
+        if (Test-Path $ShaFile)          { Remove-Item -Force $ShaFile -ErrorAction SilentlyContinue }
+        if (Test-Path $MonitorPath)      { Remove-Item -Force $MonitorPath -ErrorAction SilentlyContinue }
+        if (Test-Path $SettingsBackup)   { Remove-Item -Recurse -Force $SettingsBackup -ErrorAction SilentlyContinue }
+        if (Test-Path $PluginStatesFile) { Remove-Item -Force $PluginStatesFile -ErrorAction SilentlyContinue }
         Ok "Uninstall abgeschlossen."
     } else {
         Ok "Injection erfolgreich. Starte Discord neu..."
