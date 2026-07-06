@@ -10,6 +10,14 @@ Einfach in PowerShell einfügen und Enter drücken — Discord wird automatisch 
 iwr -useb "https://raw.githubusercontent.com/Gorden467/Vencord-Sleftry/main/install.ps1" | iex
 ```
 
+### Update (nur wenn was Neues da ist)
+
+Prüft ob GitHub einen neueren Commit hat oder ob Vencord aus Discord verschwunden ist. Wenn nichts zu tun ist, macht der Befehl nichts. Sonst aktualisiert er (Discord schließen, patchen, neu starten):
+
+```powershell
+iwr -useb "https://raw.githubusercontent.com/Gorden467/Vencord-Sleftry/main/update.ps1" | iex
+```
+
 ### Uninstall
 
 ```powershell
@@ -17,6 +25,8 @@ iwr -useb "https://raw.githubusercontent.com/Gorden467/Vencord-Sleftry/main/inst
 ```
 
 Nach dem Install: Discord → Einstellungen → Vencord → Plugins → `discordLyricsSpotifyStatus` aktivieren.
+
+**Auto-Update ist eingebaut:** ein Hintergrund-Task prüft ~60s nach jedem Discord-Start und danach alle 30 Minuten ob es ein Update gibt und zieht es automatisch. Plugin-Zustände (an/aus) bleiben dabei erhalten.
 
 ---
 
