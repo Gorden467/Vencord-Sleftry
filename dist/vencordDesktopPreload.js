@@ -1,4 +1,4 @@
-// Vencord 94cc541e
+// Vencord dd996b8e
 // Standalone: false
 // Platform: win32
 // Updater Disabled: false

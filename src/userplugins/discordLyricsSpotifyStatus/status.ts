@@ -1,5 +1,8 @@
 import { Logger } from "@utils/Logger";
+import { findByPropsLazy } from "@webpack";
 import { RestAPI } from "@webpack/common";
+
+const TokenModule = findByPropsLazy("getToken", "hideToken");
 
 const logger = new Logger("DiscordLyricsSpotifyStatus");
 
@@ -136,4 +139,33 @@ export function clearCustomStatus() {
 
 export function resetStatusCache() {
     lastText = null;
+}
+
+/**
+ * Fire-and-forget PATCH that survives the page/window unload.
+ * Used when Discord is being closed so the last lyric line is not left
+ * hanging on the user's profile.
+ */
+export function clearCustomStatusOnUnload() {
+    if (lastText === null) return;
+    lastText = null;
+
+    let token: string | undefined;
+    try { token = TokenModule?.getToken?.(); } catch { /* ignore */ }
+    if (!token) return;
+
+    try {
+        fetch("/api/v9/users/@me/settings", {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": token,
+            },
+            body: JSON.stringify({ custom_status: null }),
+            keepalive: true,
+            credentials: "include",
+        });
+    } catch {
+        // swallow - page is unloading anyway
+    }
 }

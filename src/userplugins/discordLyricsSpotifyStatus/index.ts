@@ -11,7 +11,7 @@ import definePlugin, { OptionType } from "@utils/types";
 import { clearLyricsCache, getLyrics, initLyricsNetworkAccess, setLyricsDebugMode } from "./lyrics";
 import { LyricScheduler } from "./scheduler";
 import { getCurrentTrack } from "./spotify";
-import { clearCustomStatus, resetStatusCache, setCustomStatus, setStatusDebugMode } from "./status";
+import { clearCustomStatus, clearCustomStatusOnUnload, resetStatusCache, setCustomStatus, setStatusDebugMode } from "./status";
 import type { LyricLine, SpotifyTrackState } from "./types";
 
 const POLL_INTERVAL_MS = 500;
@@ -271,6 +271,7 @@ export default definePlugin({
         void initLyricsNetworkAccess();
         (globalThis as any).discordLyricsSpotifyStatusForceRefresh = forceRefreshCurrentTrackLyrics;
         (globalThis as any).discordLyricsStatusForceRefresh = forceRefreshCurrentTrackLyrics;
+        registerUnloadClear();
         startPolling();
     },
 
@@ -281,9 +282,30 @@ export default definePlugin({
         trackLoadToken++;
         delete (globalThis as any).discordLyricsSpotifyStatusForceRefresh;
         delete (globalThis as any).discordLyricsStatusForceRefresh;
+        unregisterUnloadClear();
 
         if (settings.store.clearOnStop) {
             clearCustomStatus();
         }
     },
 });
+
+let unloadHandler: (() => void) | null = null;
+
+function registerUnloadClear() {
+    if (unloadHandler) return;
+    unloadHandler = () => {
+        if (settings.store.clearOnStop) {
+            clearCustomStatusOnUnload();
+        }
+    };
+    window.addEventListener("beforeunload", unloadHandler);
+    window.addEventListener("pagehide", unloadHandler);
+}
+
+function unregisterUnloadClear() {
+    if (!unloadHandler) return;
+    window.removeEventListener("beforeunload", unloadHandler);
+    window.removeEventListener("pagehide", unloadHandler);
+    unloadHandler = null;
+}
