@@ -1,4 +1,4 @@
-// Vencord 098c5242
+// Vencord 630d9c05
 // Standalone: false
 // Platform: win32
 // Updater Disabled: false

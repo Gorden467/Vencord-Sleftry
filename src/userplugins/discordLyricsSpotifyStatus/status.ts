@@ -5,6 +5,15 @@ import { RestAPI } from "@webpack/common";
 
 const TokenModule = findByPropsLazy("getToken", "hideToken");
 const ACTIVE_KEY = "DiscordLyricsSpotifyStatus_lyricActive";
+const ORIGINAL_KEY = "DiscordLyricsSpotifyStatus_originalStatus";
+const LYRIC_PREFIX = "🎵";
+
+type SavedCustomStatus = {
+    text: string | null;
+    emojiName?: string | null;
+    emojiId?: string | null;
+    expiresAt?: string | null;
+} | null;
 
 function markLyricActive(active: boolean) {
     void DataStore.set(ACTIVE_KEY, active).catch(() => { /* ignore */ });
@@ -16,6 +25,109 @@ export async function wasLyricActive(): Promise<boolean> {
     } catch {
         return false;
     }
+}
+
+let captureInFlight: Promise<void> | null = null;
+
+/**
+ * Reads the user's current custom_status from Discord and saves it as
+ * "original" so we can restore it later when clearing our lyric.
+ * Runs once per plugin session (guarded by captureInFlight).
+ * If the CURRENT status starts with our lyric prefix (leftover from a
+ * previous session), keeps whatever was already stored so a stale lyric
+ * doesn't nuke the real original.
+ */
+export function captureOriginalStatus(): Promise<void> {
+    if (captureInFlight) return captureInFlight;
+
+    captureInFlight = (async () => {
+        try {
+            const resp = await RestAPI.get({ url: "/users/@me/settings" });
+            const custom: any = resp?.body?.custom_status ?? null;
+
+            if (custom?.text && typeof custom.text === "string" && custom.text.startsWith(LYRIC_PREFIX)) {
+                debugLog("Current status is our lyric, keeping previously saved original");
+                return;
+            }
+
+            const saved: SavedCustomStatus = custom ? {
+                text: custom.text ?? null,
+                emojiName: custom.emoji_name ?? null,
+                emojiId: custom.emoji_id ?? null,
+                expiresAt: custom.expires_at ?? null,
+            } : null;
+
+            await DataStore.set(ORIGINAL_KEY, saved);
+            debugLog("Captured original custom status", saved);
+        } catch {
+            // ignore - restore just won't have anything to fall back to
+        }
+    })();
+
+    return captureInFlight;
+}
+
+let cachedOriginal: SavedCustomStatus | undefined = undefined;
+
+async function getSavedOriginalStatus(): Promise<SavedCustomStatus | undefined> {
+    try {
+        const value = await DataStore.get<SavedCustomStatus>(ORIGINAL_KEY);
+        cachedOriginal = value;
+        return value;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * Loads the saved original into an in-memory cache so callers that
+ * cannot await (like the unload handler) can read it synchronously.
+ * Call this once at plugin start.
+ */
+export async function primeOriginalStatusCache(): Promise<void> {
+    await getSavedOriginalStatus();
+}
+
+export async function forgetOriginalStatus(): Promise<void> {
+    captureInFlight = null;
+    try { await DataStore.del(ORIGINAL_KEY); } catch { /* ignore */ }
+}
+
+function isNonEmptySavedStatus(saved: SavedCustomStatus | undefined): saved is Exclude<SavedCustomStatus, null> & { text: string } {
+    return !!(saved && typeof saved.text === "string" && saved.text.length > 0);
+}
+
+async function buildRestoreOrClearEntry(labelSuffix: string): Promise<QueueEntry> {
+    const saved = await getSavedOriginalStatus();
+
+    if (isNonEmptySavedStatus(saved)) {
+        const text = saved.text.slice(0, 128);
+        return {
+            body: {
+                custom_status: {
+                    text,
+                    emoji_name: saved.emojiName ?? null,
+                    emoji_id:   saved.emojiId   ?? null,
+                    expires_at: saved.expiresAt ?? null,
+                },
+            },
+            fallbackBody: {
+                customStatus: {
+                    text,
+                    emojiName: saved.emojiName ?? null,
+                    emojiId:   saved.emojiId   ?? null,
+                    expiresAt: saved.expiresAt ?? null,
+                },
+            },
+            label: `(restore${labelSuffix}: ${text.slice(0, 24)})`,
+        };
+    }
+
+    return {
+        body: { custom_status: null },
+        fallbackBody: { customStatus: null },
+        label: `(clear${labelSuffix})`,
+    };
 }
 
 const logger = new Logger("DiscordLyricsSpotifyStatus");
@@ -67,6 +179,10 @@ function enqueueClear(entry: QueueEntry) {
 async function processQueue() {
     if (processing) return;
     processing = true;
+
+    if (captureInFlight) {
+        try { await captureInFlight; } catch { /* ignore */ }
+    }
 
     while (queue.length > 0) {
         const entry = queue[0];
@@ -144,31 +260,27 @@ export function clearCustomStatus() {
     lastText = null;
     markLyricActive(false);
 
-    enqueueClear({
-        body: { custom_status: null },
-        fallbackBody: { customStatus: null },
-        label: "(clear)",
-    });
-
-    void processQueue();
+    void (async () => {
+        const entry = await buildRestoreOrClearEntry("");
+        enqueueClear(entry);
+        void processQueue();
+    })();
 }
 
 /**
- * Clears the custom status even if we haven't tracked setting it in
- * this session. Used on start-up to remove a stale lyric that was left
- * behind by a previous session (e.g. crash).
+ * Clears (or restores the saved original) even if we haven't tracked
+ * setting a status in this session. Used on start-up to reset a stale
+ * lyric that was left behind by a previous session (e.g. crash).
  */
 export function forceClearCustomStatus() {
     lastText = null;
     markLyricActive(false);
 
-    enqueueClear({
-        body: { custom_status: null },
-        fallbackBody: { customStatus: null },
-        label: "(force clear)",
-    });
-
-    void processQueue();
+    void (async () => {
+        const entry = await buildRestoreOrClearEntry(" force");
+        enqueueClear(entry);
+        void processQueue();
+    })();
 }
 
 export function resetStatusCache() {
@@ -189,6 +301,21 @@ export function clearCustomStatusOnUnload() {
     try { token = TokenModule?.getToken?.(); } catch { /* ignore */ }
     if (!token) return;
 
+    let body: any;
+    if (isNonEmptySavedStatus(cachedOriginal)) {
+        const text = cachedOriginal.text.slice(0, 128);
+        body = {
+            custom_status: {
+                text,
+                emoji_name: cachedOriginal.emojiName ?? null,
+                emoji_id:   cachedOriginal.emojiId   ?? null,
+                expires_at: cachedOriginal.expiresAt ?? null,
+            },
+        };
+    } else {
+        body = { custom_status: null };
+    }
+
     try {
         fetch("/api/v9/users/@me/settings", {
             method: "PATCH",
@@ -196,7 +323,7 @@ export function clearCustomStatusOnUnload() {
                 "Content-Type": "application/json",
                 "Authorization": token,
             },
-            body: JSON.stringify({ custom_status: null }),
+            body: JSON.stringify(body),
             keepalive: true,
             credentials: "include",
         });

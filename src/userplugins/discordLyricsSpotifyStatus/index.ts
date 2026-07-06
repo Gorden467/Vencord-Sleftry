@@ -11,7 +11,7 @@ import definePlugin, { OptionType } from "@utils/types";
 import { clearLyricsCache, getLyrics, initLyricsNetworkAccess, setLyricsDebugMode } from "./lyrics";
 import { LyricScheduler } from "./scheduler";
 import { getCurrentTrack } from "./spotify";
-import { clearCustomStatus, clearCustomStatusOnUnload, forceClearCustomStatus, resetStatusCache, setCustomStatus, setStatusDebugMode, wasLyricActive } from "./status";
+import { captureOriginalStatus, clearCustomStatus, clearCustomStatusOnUnload, forceClearCustomStatus, primeOriginalStatusCache, resetStatusCache, setCustomStatus, setStatusDebugMode, wasLyricActive } from "./status";
 import type { LyricLine, SpotifyTrackState } from "./types";
 
 const POLL_INTERVAL_MS = 500;
@@ -272,6 +272,8 @@ export default definePlugin({
         (globalThis as any).discordLyricsSpotifyStatusForceRefresh = forceRefreshCurrentTrackLyrics;
         (globalThis as any).discordLyricsStatusForceRefresh = forceRefreshCurrentTrackLyrics;
         registerUnloadClear();
+        void primeOriginalStatusCache();
+        void captureOriginalStatus();
         void resetStaleLyricStatus();
         startPolling();
     },
