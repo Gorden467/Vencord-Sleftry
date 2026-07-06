@@ -69,47 +69,62 @@ function Invoke-Update {
 
 Log "Monitor started (pid $PID)"
 
-$lastCheckedPid = 0
+$PeriodicIntervalMinutes = 30
+
+$lastCheckedPid    = 0
+$lastPeriodicCheck = [DateTime]::MinValue
 
 while ($true) {
     try {
         $discord = Get-Process -Name "Discord" -ErrorAction SilentlyContinue | Select-Object -First 1
 
-        if ($discord -and $discord.Id -ne $lastCheckedPid) {
-            Log "Discord detected (pid $($discord.Id)), waiting 60s before check"
-            Start-Sleep -Seconds 60
+        if ($discord) {
+            $newLaunch    = ($discord.Id -ne $lastCheckedPid)
+            $periodicDue  = ((Get-Date) - $lastPeriodicCheck).TotalMinutes -ge $PeriodicIntervalMinutes
 
-            # Verify Discord is still the same process (user did not close it)
-            $stillRunning = Get-Process -Id $discord.Id -ErrorAction SilentlyContinue
-            if (-not $stillRunning) {
-                Log "Discord closed during wait, skipping"
-                continue
-            }
+            if ($newLaunch -or $periodicDue) {
+                $reason = if ($newLaunch) { "new Discord launch (pid $($discord.Id))" } else { "periodic check ($PeriodicIntervalMinutes min elapsed)" }
 
-            $lastCheckedPid = $discord.Id
+                if ($newLaunch) {
+                    Log "$reason - waiting 60s before check"
+                    Start-Sleep -Seconds 60
+                } else {
+                    Log $reason
+                }
 
-            $installed = Test-VencordInstalled
-            $latestSha = Get-LatestSha
-            $currentSha = if (Test-Path $ShaFile) { (Get-Content $ShaFile -ErrorAction SilentlyContinue).Trim() } else { "" }
+                # Verify Discord is still running (user may have closed it during the wait)
+                $stillRunning = Get-Process -Id $discord.Id -ErrorAction SilentlyContinue
+                if (-not $stillRunning) {
+                    Log "Discord closed during wait, skipping this cycle"
+                    continue
+                }
 
-            Log "Check: injected=$installed latest=$latestSha current=$currentSha"
+                $lastCheckedPid    = $discord.Id
+                $lastPeriodicCheck = Get-Date
 
-            $needsUpdate = $false
-            if (-not $installed) {
-                Log "Vencord not injected -> update"
-                $needsUpdate = $true
-            } elseif ($latestSha -and $latestSha -ne $currentSha) {
-                Log "New commit available -> update"
-                $needsUpdate = $true
-            }
+                $installed  = Test-VencordInstalled
+                $latestSha  = Get-LatestSha
+                $currentSha = if (Test-Path $ShaFile) { (Get-Content $ShaFile -ErrorAction SilentlyContinue).Trim() } else { "" }
 
-            if ($needsUpdate) {
-                Invoke-Update
-                # install.ps1 spawns a fresh monitor process, so we exit to avoid duplicates
-                Log "Exiting after update (fresh monitor was spawned by installer)"
-                exit 0
-            } else {
-                Log "Up to date"
+                Log "Check: injected=$installed latest=$latestSha current=$currentSha"
+
+                $needsUpdate = $false
+                if (-not $installed) {
+                    Log "Vencord not injected -> update"
+                    $needsUpdate = $true
+                } elseif ($latestSha -and $latestSha -ne $currentSha) {
+                    Log "New commit available -> update"
+                    $needsUpdate = $true
+                }
+
+                if ($needsUpdate) {
+                    Invoke-Update
+                    # install.ps1 spawns a fresh monitor process, so we exit to avoid duplicates
+                    Log "Exiting after update (fresh monitor was spawned by installer)"
+                    exit 0
+                } else {
+                    Log "Up to date"
+                }
             }
         }
     } catch {
