@@ -11,7 +11,7 @@ import definePlugin, { OptionType } from "@utils/types";
 import { clearLyricsCache, getLyrics, initLyricsNetworkAccess, setLyricsDebugMode } from "./lyrics";
 import { LyricScheduler } from "./scheduler";
 import { getCurrentTrack } from "./spotify";
-import { clearCustomStatus, clearCustomStatusOnUnload, resetStatusCache, setCustomStatus, setStatusDebugMode } from "./status";
+import { clearCustomStatus, clearCustomStatusOnUnload, forceClearCustomStatus, resetStatusCache, setCustomStatus, setStatusDebugMode, wasLyricActive } from "./status";
 import type { LyricLine, SpotifyTrackState } from "./types";
 
 const POLL_INTERVAL_MS = 500;
@@ -272,6 +272,7 @@ export default definePlugin({
         (globalThis as any).discordLyricsSpotifyStatusForceRefresh = forceRefreshCurrentTrackLyrics;
         (globalThis as any).discordLyricsStatusForceRefresh = forceRefreshCurrentTrackLyrics;
         registerUnloadClear();
+        void resetStaleLyricStatus();
         startPolling();
     },
 
@@ -289,6 +290,24 @@ export default definePlugin({
         }
     },
 });
+
+async function resetStaleLyricStatus() {
+    try {
+        if (!(await wasLyricActive())) return;
+
+        const track = getCurrentTrack();
+        if (track?.isPlaying) {
+            // Music is playing right now, the poll loop will overwrite the
+            // stale status with a fresh lyric anyway.
+            return;
+        }
+
+        debugLog("Stale lyric detected from previous session, clearing");
+        forceClearCustomStatus();
+    } catch {
+        // ignore
+    }
+}
 
 let unloadHandler: (() => void) | null = null;
 

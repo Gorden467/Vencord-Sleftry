@@ -1,8 +1,22 @@
+import * as DataStore from "@api/DataStore";
 import { Logger } from "@utils/Logger";
 import { findByPropsLazy } from "@webpack";
 import { RestAPI } from "@webpack/common";
 
 const TokenModule = findByPropsLazy("getToken", "hideToken");
+const ACTIVE_KEY = "DiscordLyricsSpotifyStatus_lyricActive";
+
+function markLyricActive(active: boolean) {
+    void DataStore.set(ACTIVE_KEY, active).catch(() => { /* ignore */ });
+}
+
+export async function wasLyricActive(): Promise<boolean> {
+    try {
+        return (await DataStore.get(ACTIVE_KEY)) === true;
+    } catch {
+        return false;
+    }
+}
 
 const logger = new Logger("DiscordLyricsSpotifyStatus");
 
@@ -101,6 +115,7 @@ export function setCustomStatus(text: string) {
     if (text === lastText) return;
 
     lastText = text;
+    markLyricActive(true);
 
     enqueueLatestLyric({
         body: {
@@ -127,11 +142,30 @@ export function clearCustomStatus() {
     if (lastText === null) return;
 
     lastText = null;
+    markLyricActive(false);
 
     enqueueClear({
         body: { custom_status: null },
         fallbackBody: { customStatus: null },
         label: "(clear)",
+    });
+
+    void processQueue();
+}
+
+/**
+ * Clears the custom status even if we haven't tracked setting it in
+ * this session. Used on start-up to remove a stale lyric that was left
+ * behind by a previous session (e.g. crash).
+ */
+export function forceClearCustomStatus() {
+    lastText = null;
+    markLyricActive(false);
+
+    enqueueClear({
+        body: { custom_status: null },
+        fallbackBody: { customStatus: null },
+        label: "(force clear)",
     });
 
     void processQueue();
@@ -149,6 +183,7 @@ export function resetStatusCache() {
 export function clearCustomStatusOnUnload() {
     if (lastText === null) return;
     lastText = null;
+    markLyricActive(false);
 
     let token: string | undefined;
     try { token = TokenModule?.getToken?.(); } catch { /* ignore */ }
