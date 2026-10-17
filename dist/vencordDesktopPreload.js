@@ -1,4 +1,4 @@
-// Vencord 6c38a35b
+// Vencord 2fe58faf
 // Standalone: false
 // Platform: win32
 // Updater Disabled: false

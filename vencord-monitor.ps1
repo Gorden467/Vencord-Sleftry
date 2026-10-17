@@ -48,10 +48,11 @@ function Test-VencordInstalled {
     )
     foreach ($root in $roots) {
         if (-not (Test-Path $root)) { continue }
-        $appDirs = Get-ChildItem -Path $root -Directory -Filter "app-*" -ErrorAction SilentlyContinue
-        foreach ($d in $appDirs) {
-            if (Test-Path (Join-Path $d.FullName "resources\_app.asar")) { return $true }
-        }
+        # only the newest app-* counts, Discord updates leave the old patched folder behind
+        $newest = Get-ChildItem -Path $root -Directory -Filter "app-*" -ErrorAction SilentlyContinue |
+            Sort-Object { [version]($_.Name -replace '^app-', '') } -Descending |
+            Select-Object -First 1
+        if ($newest -and (Test-Path (Join-Path $newest.FullName "resources\_app.asar"))) { return $true }
     }
     return $false
 }
